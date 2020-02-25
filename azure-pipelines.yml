@@ -1,0 +1,72 @@
+trigger:
+- master
+
+stages:
+- stage: Build
+  jobs:
+  - job: build
+    strategy:
+      matrix:
+        linux: { imageName: "ubuntu-18.04" }
+        mac: { imageName: "macos-10.14" }
+        windows: { imageName: "windows-2019" }
+      maxParallel: 3
+    pool:
+      vmImage: $(imageName)
+    steps:
+    - task: UseDotNet@2
+      inputs:
+        packageType: 'sdk'
+        useGlobalJson: true
+    - task: NuGetAuthenticate@0
+    - pwsh: ./build.ps1 -PublishArtifactsToAzureDevOps:(("$(imageName)" -eq "windows-2019")) -ArtifactsStagingPath "$(Build.ArtifactStagingDirectory)"
+      displayName: run build.ps1
+      failOnStderr: true
+      env:
+        DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+        DOTNET_CLI_TELEMETRY_OPTOUT: 1
+        AssentNonInteractive: true
+
+    - task: PublishTestResults@2
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: 'VSTest'
+        testResultsFiles: '**/*.trx'
+        failTaskOnFailedTests: true
+        testRunTitle: 'Test run on $(imageName)'
+        buildPlatform: '$(imageName)'
+
+- stage: deploy_phoenix
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+  jobs:
+  - template: azure-pipelines-release-template.yml
+    parameters:
+      environmentNameSuffix: phoenix
+      environmentAutoDelete: true
+      azureSubscription: 'LoGIC DEV'
+      instanceId: p$(Build.BuildId)
+      resourceGroupLocation: westeurope
+      applicationInsightsName: kmd-momentum-mea-phoenix-ai
+      applicationInsightsResourceGroup: kmd-momentum-mea-shareddev-rg
+      diagnosticSeqServerUrl: $(PhoenixDiagnosticSeqServerUrl)
+      diagnosticSeqApiKey: $(PhoenixDiagnosticSeqApiKey)
+      webAppServicePlanSku: S1
+      webAppConfigAlwaysOn: false
+
+- stage: deploy_shareddev
+  dependsOn: Build
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
+  jobs:
+  - template: azure-pipelines-release-template.yml
+    parameters:
+      environmentNameSuffix: shareddev
+      environmentAutoDelete: false
+      azureSubscription: 'LoGIC DEV'
+      instanceId: shareddev
+      resourceGroupLocation: westeurope
+      applicationInsightsName: kmd-momentum-mea-shareddev-ai
+      applicationInsightsResourceGroup: kmd-momentum-mea-shareddev-rg
+      diagnosticSeqServerUrl: $(ShareddevDiagnosticSeqAServerUrl)
+      diagnosticSeqApiKey: $(ShareddevDiagnosticSeqApiKey)
+      webAppServicePlanSku: S1
+      webAppConfigAlwaysOn: false

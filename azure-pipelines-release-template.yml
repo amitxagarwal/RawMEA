@@ -1,0 +1,54 @@
+parameters:
+  azureSubscription: 'LoGIC DEV'
+  environmentNameSuffix: phoenix
+  environmentAutoDelete: false
+  instanceId: p12345
+  resourceGroupLocation: westeurope
+  applicationInsightsName: kmd-momentum-mea-shareddev-ai
+  applicationInsightsResourceGroup: kmd-momentum-mea-shareddev-rg
+  diagnosticSeqServerUrl: https://myseq.com/
+  diagnosticSeqApiKey: <secret>
+  webAppServicePlanSku: B1
+  webAppConfigAlwaysOn: true
+
+jobs:
+  - deployment: deploy_momentum_mea_${{ parameters.environmentNameSuffix }}
+    pool: { vmImage: 'windows-2019' }
+    environment: momentum_mea_${{ parameters.environmentNameSuffix }}
+    variables:
+      InstanceId: ${{ parameters.instanceId }}
+      ResourceGroupLocation: ${{ parameters.resourceGroupLocation }}
+      ApplicationInsightsName: ${{ parameters.applicationInsightsName }}
+      ApplicationInsightsResourceGroup: ${{ parameters.applicationInsightsResourceGroup }}
+      DiagnosticSeqServerUrl: ${{ parameters.diagnosticSeqServerUrl }}
+      DiagnosticSeqApiKey: ${{ parameters.diagnosticSeqApiKey }}
+      WebAppName: kmd-momentum-mea-${{ parameters.instanceId }}-webapp
+      ResourceGroupName: kmd-momentum-mea-${{ parameters.instanceId }}-rg
+      WebAppServicePlanSku: ${{ parameters.webAppServicePlanSku }}
+      WebAppConfigAlwaysOn: ${{ parameters.webAppConfigAlwaysOn }}
+
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - download: current
+
+            - task: AzurePowerShell@4
+              displayName: Deploy azure infrastructure
+              inputs:
+                azureSubscription: ${{ parameters.azureSubscription }}
+                ScriptType: 'FilePath'
+                ScriptPath: '$(Pipeline.Workspace)/deploy/deploy-infrastructure.ps1'
+                ScriptArguments: -MarkForAutoDelete:("${{ parameters.environmentAutoDelete }}" -eq "true") -InstanceId '$(InstanceId)' -ResourceGroupLocation '$(ResourceGroupLocation)' -ApplicationInsightsName '$(ApplicationInsightsName)' -ApplicationInsightsResourceGroup '$(ApplicationInsightsResourceGroup)' -DiagnosticSeqServerUrl '$(DiagnosticSeqServerUrl)' -DiagnosticSeqApiKey '$(DiagnosticSeqApiKey)' -WebAppConfigAlwaysOn ("$(WebAppConfigAlwaysOn)" -eq "true") -WebAppServicePlanSku '$(WebAppServicePlanSku)'
+                azurePowerShellVersion: 'LatestVersion'
+                pwsh: true
+
+            - task: AzurePowerShell@4
+              displayName: Deploy webapp binaries
+              inputs:
+                azureSubscription: ${{ parameters.azureSubscription }}
+                ScriptType: 'FilePath'
+                ScriptPath: '$(Pipeline.Workspace)/deploy/deploy-webapps.ps1'
+                ScriptArguments: -PublishedArtifactsPath '$(Pipeline.Workspace)/Applications' -WebAppName '$(WebAppName)' -ResourceGroupName '$(ResourceGroupName)'
+                azurePowerShellVersion: 'LatestVersion'
+                pwsh: true

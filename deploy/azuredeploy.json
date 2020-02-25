@@ -1,0 +1,225 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "instanceId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 9,
+      "metadata": {
+        "description": "The instance ID (e.g. 'udv', 'udvtest', 'shareddev', 'prod' etc.).",
+        "$hint": "Generally only use the 'instanceId' part of the resourceNamePrefix"
+      }
+    },
+    "resourceNamePrefix": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 27,
+      "metadata": {
+        "description": "The resource name prefix (e.g. 'kmd-momentum-mea-udv', 'kmd-momentum-shareddev', 'kmd-momentum-prod' etc.).",
+        "$hint": "Only use letters, numbers, and hyphen characters here. The hyphens are stripped to make the storage account name, which cannot be more than 24 characters (see https://docs.microsoft.com/en-us/azure/storage/common/storage-account-overview#naming-storage-accounts)."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Location for all created resources. If not specified, then the resource group location is used."
+      }
+    },
+    "diagnosticSeqServerUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "The url of diagnostics seq instance (e.g. 'https://myseq.kmdlogic.io/') which will help in diagnosing."
+      }
+    },
+    "diagnosticSeqApiKey": {
+      "type": "string",
+      "metadata": {
+        "description": "Optional. An api key for diagnostics seq if required."
+      }
+    },
+    "applicationInsightsName": {
+      "type": "string",
+      "metadata": {
+        "description": "The name of the application insights instance. E.g. 'kmd-momentum-udv-ai' or 'kmd-momentum-ai'."
+      }
+    },
+    "applicationInsightsResourceGroup": {
+      "type": "string",
+      "metadata": {
+        "description": "Resource group name of app insights instance. E.g. 'kmd-momentum-udv-rg' or 'kmd-momentum-shareddev-rg'"
+      }
+    },
+    "consoleLoggingMinLevel": {
+      "type": "string",
+      "defaultValue": "Fatal",
+      "allowedValues": [
+        "Debug",
+        "Verbose",
+        "Information",
+        "Error",
+        "Fatal"
+      ],
+      "metadata": {
+        "description": "The serilog debug level"
+      }
+    },
+    "webAppServicePlanSku": {
+      "type": "string",
+      "defaultValue": "S1",
+      "allowedValues": [
+        "D1",
+        "F1",
+        "B1",
+        "B2",
+        "B3",
+        "S1",
+        "S2",
+        "S3",
+        "P1",
+        "P2",
+        "P3",
+        "P1V2",
+        "P2V2",
+        "P3V2",
+        "I1",
+        "I2",
+        "I3",
+        "Y1"
+      ],
+      "metadata": {
+        "description": "The pricing tier for the App Service plan."
+      }
+    },
+    "webAppConfigAlwaysOn": {
+      "type": "bool",
+      "allowedValues": [
+        true,
+        false
+      ],
+      "defaultValue": false,
+      "metadata": {
+        "description": "true will make the web site 'always on' - incompatible with certain plans like D1 Shared"
+      }
+    }
+  },
+  "variables": {
+    "resourceNamePrefixLower": "[tolower(parameters('resourceNamePrefix'))]",
+    "webAppName": "[concat(variables('resourceNamePrefixLower'),'-webapp')]",
+    "stagingSlotName": "staging",
+    "webAppStagingSlotName": "[concat(variables('webAppName'), '/', variables('stagingSlotName'))]",
+    "hostingPlanName": "[concat(variables('resourceNamePrefixLower'),'-appsvcplan')]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2018-02-01",
+      "name": "[variables('hostingPlanName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "[parameters('webAppServicePlanSku')]"
+      }
+    },
+    {
+      "apiVersion": "2015-08-01",
+      "type": "Microsoft.Web/sites",
+      "name": "[variables('webAppName')]",
+      "location": "[parameters('location')]",
+      "kind": "app",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]"
+      ],
+      "properties": {
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
+        "siteConfig": {
+          "alwaysOn": "[parameters('webAppConfigAlwaysOn')]",
+          "appSettings": [
+            {
+              "name": "SlotName",
+              "value": "production"
+            },
+            {
+              "name": "KMD_MOMENTUM_MEA_EnvironmentInstanceId",
+              "value": "[parameters('instanceId')]"
+            },
+            {
+              "name": "APPINSIGHTS_INSTRUMENTATIONKEY",
+              "value": "[reference(resourceId(parameters('applicationInsightsResourceGroup'), 'Microsoft.Insights/components', parameters('applicationInsightsName')), '2015-05-01').InstrumentationKey]"
+            },
+            {
+              "name": "KMD_MOMENTUM_MEA_ConsoleLoggingMinLevel",
+              "value": "[parameters('consoleLoggingMinLevel')]"
+            },
+            {
+              "name": "KMD_MOMENTUM_MEA_DiagnosticSeqServerUrl",
+              "value": "[parameters('diagnosticSeqServerUrl')]"
+            },
+            {
+              "name": "KMD_MOMENTUM_MEA_DiagnosticSeqApiKey",
+              "value": "[parameters('diagnosticSeqApiKey')]"
+            }
+          ]
+        }
+      },
+      "resources": [
+        {
+          "name": "slotConfigNames",
+          "type": "config",
+          "apiVersion": "2015-08-01",
+          "dependsOn": [
+            "[resourceId('Microsoft.Web/Sites', variables('webAppName'))]"
+          ],
+          "tags": {
+            "displayName": "slotConfigNames"
+          },
+          "properties": {
+            "appSettingNames": [ "SlotName" ]
+          }
+        }
+      ]
+    },
+    {
+      "apiVersion": "2016-08-01",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('webAppName'))]"
+      ],
+      "kind": "app",
+      "type": "Microsoft.Web/sites/slots",
+      "location": "[resourceGroup().location]",
+      "name": "[variables('webAppStagingSlotName')]",
+      "properties": {
+        "enabled": true,
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
+        "siteConfig": {
+          "appSettings": [
+            {
+              "name": "SlotName",
+              "value": "staging"
+            },
+            {
+              "name": "KMD_MOMENTUM_MEA_EnvironmentInstanceId",
+              "value": "[parameters('instanceId')]"
+            },
+            {
+              "name": "APPINSIGHTS_INSTRUMENTATIONKEY",
+              "value": "[reference(resourceId(parameters('applicationInsightsResourceGroup'), 'Microsoft.Insights/components', parameters('applicationInsightsName')), '2015-05-01').InstrumentationKey]"
+            },
+            {
+              "name": "KMD_MOMENTUM_MEA_ConsoleLoggingMinLevel",
+              "value": "[parameters('consoleLoggingMinLevel')]"
+            },
+            {
+              "name": "KMD_MOMENTUM_MEA_DiagnosticSeqServerUrl",
+              "value": "[parameters('diagnosticSeqServerUrl')]"
+            },
+            {
+              "name": "KMD_MOMENTUM_MEA_DiagnosticSeqApiKey",
+              "value": "[parameters('diagnosticSeqApiKey')]"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
